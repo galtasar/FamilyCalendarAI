@@ -1,0 +1,20 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.3.2">
+
+  <ItemGroup>
+    <ProjectReference Include="..\FamilyCalendar.Api\FamilyCalendar.Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.NodeJs" Version="*" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="*" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>df930b84-fb58-41ec-b51f-ecc9c0c0723c</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

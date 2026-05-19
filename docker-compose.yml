@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: familycalendardb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: src
+      dockerfile: FamilyCalendar.Api/Dockerfile
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__familycalendardb=Host=postgres;Database=familycalendardb;Username=postgres;Password=postgres
+      - OpenAI__ApiKey=${OPENAI_API_KEY}
+      - OpenAI__Model=gpt-4.1
+      - Gmail__ClientId=${GMAIL_CLIENT_ID}
+      - Gmail__ClientSecret=${GMAIL_CLIENT_SECRET}
+      - Gmail__RefreshToken=${GMAIL_REFRESH_TOKEN}
+      - Gmail__ApplicationEmail=dahl.aicalendar@gmail.com
+      - GoogleCalendar__ClientId=${GMAIL_CLIENT_ID}
+      - GoogleCalendar__ClientSecret=${GMAIL_CLIENT_SECRET}
+      - GoogleCalendar__RefreshToken=${GMAIL_REFRESH_TOKEN}
+      - ReviewNotification__AppBaseUrl=http://localhost:8080
+      - ReviewNotification__RecipientEmail=dahl.aicalendar@gmail.com
+      - AdminKey=${ADMIN_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: src/FamilyCalendar.Web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

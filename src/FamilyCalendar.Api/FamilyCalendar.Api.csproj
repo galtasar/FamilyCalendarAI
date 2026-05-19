@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation.AspNetCore" Version="*" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
+    <PackageReference Include="Serilog.AspNetCore" Version="*" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FamilyCalendar.Core\FamilyCalendar.Core.csproj" />
+    <ProjectReference Include="..\FamilyCalendar.Infrastructure\FamilyCalendar.Infrastructure.csproj" />
+    <ProjectReference Include="..\FamilyCalendar.AI\FamilyCalendar.AI.csproj" />
+    <ProjectReference Include="..\FamilyCalendar.Email\FamilyCalendar.Email.csproj" />
+    <ProjectReference Include="..\FamilyCalendar.Calendar\FamilyCalendar.Calendar.csproj" />
+    <ProjectReference Include="..\FamilyCalendar.ServiceDefaults\FamilyCalendar.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

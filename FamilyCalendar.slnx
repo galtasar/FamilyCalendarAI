@@ -1,0 +1,12 @@
+<Solution>
+  <Project Path="src/FamilyCalendar.AI/FamilyCalendar.AI.csproj" />
+  <Project Path="src/FamilyCalendar.Api/FamilyCalendar.Api.csproj" />
+  <Project Path="src/FamilyCalendar.AppHost/FamilyCalendar.AppHost.csproj" />
+  <Project Path="src/FamilyCalendar.Calendar/FamilyCalendar.Calendar.csproj" />
+  <Project Path="src/FamilyCalendar.Core/FamilyCalendar.Core.csproj" />
+  <Project Path="src/FamilyCalendar.Email/FamilyCalendar.Email.csproj" />
+  <Project Path="src/FamilyCalendar.Infrastructure/FamilyCalendar.Infrastructure.csproj" />
+  <Project Path="src/FamilyCalendar.ServiceDefaults/FamilyCalendar.ServiceDefaults.csproj" />
+  <Project Path="tests/FamilyCalendar.IntegrationTests/FamilyCalendar.IntegrationTests.csproj" />
+  <Project Path="tests/FamilyCalendar.UnitTests/FamilyCalendar.UnitTests.csproj" />
+</Solution>
