@@ -4,5 +4,9 @@ namespace FamilyCalendar.Core.Interfaces;
 
 public interface IDuplicateDetectionService
 {
-    Task<bool> IsDuplicateAsync(CalendarEvent candidate, CancellationToken ct = default);
+    /// <summary>
+    /// Returns the existing event that matches the candidate (same family member, same day, similar title),
+    /// or null if no match is found.
+    /// </summary>
+    Task<CalendarEvent?> FindMatchAsync(CalendarEvent candidate, CancellationToken ct = default);
 }

@@ -95,7 +95,11 @@ public class GoogleCalendarService(IOptions<GoogleCalendarOptions> options, ILog
 
     public async Task UpdateEventAsync(CalendarEvent calendarEvent)
     {
-        if (string.IsNullOrEmpty(calendarEvent.CalendarEventId)) return;
+        if (string.IsNullOrEmpty(calendarEvent.CalendarEventId))
+        {
+            logger.LogWarning("UpdateEventAsync called for event {EventId} '{Title}' with no CalendarEventId — skipping sync", calendarEvent.Id, calendarEvent.Title);
+            return;
+        }
 
         var client = await GetClientAsync();
         var calendarId = await GetOrCreateFamiljekalenderAsync();
@@ -106,7 +110,11 @@ public class GoogleCalendarService(IOptions<GoogleCalendarOptions> options, ILog
 
     public async Task DeleteEventAsync(CalendarEvent calendarEvent)
     {
-        if (string.IsNullOrEmpty(calendarEvent.CalendarEventId)) return;
+        if (string.IsNullOrEmpty(calendarEvent.CalendarEventId))
+        {
+            logger.LogWarning("DeleteEventAsync called for event {EventId} '{Title}' with no CalendarEventId — skipping sync", calendarEvent.Id, calendarEvent.Title);
+            return;
+        }
 
         var client = await GetClientAsync();
         var calendarId = await GetOrCreateFamiljekalenderAsync();
@@ -123,16 +131,16 @@ public class GoogleCalendarService(IOptions<GoogleCalendarOptions> options, ILog
             Location = evt.Location,
         };
 
-        if (evt.EndTime == null)
+        if (!evt.HasTime)
         {
-            // All-day event
+            // No specific time known — create as all-day event
             googleEvent.Start = new EventDateTime { Date = evt.StartTime.ToString("yyyy-MM-dd") };
             googleEvent.End = new EventDateTime { Date = evt.StartTime.AddDays(1).ToString("yyyy-MM-dd") };
         }
         else
         {
             googleEvent.Start = new EventDateTime { DateTimeDateTimeOffset = evt.StartTime, TimeZone = "Europe/Stockholm" };
-            googleEvent.End = new EventDateTime { DateTimeDateTimeOffset = evt.EndTime, TimeZone = "Europe/Stockholm" };
+            googleEvent.End = new EventDateTime { DateTimeDateTimeOffset = evt.EndTime ?? evt.StartTime.AddHours(1), TimeZone = "Europe/Stockholm" };
         }
 
         return googleEvent;

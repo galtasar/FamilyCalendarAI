@@ -2,12 +2,25 @@ using FamilyCalendar.Core.Models;
 using Google.Apis.Gmail.v1.Data;
 using Ical.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using UglyToad.PdfPig;
 
 namespace FamilyCalendar.Email.Services;
 
 public class EmailParser
 {
+    private const int MaxAttachmentTextLength = 2000;
+
+    private static readonly Regex[] QuotedContentPatterns =
+    [
+        new(@"^Den \d", RegexOptions.Multiline | RegexOptions.Compiled),
+        new(@"^On \w{3}[\w,. ]+wrote:", RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"^-{3,}\s*Vidarebefordrat meddelande", RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"^-{3,}\s*Ursprungligt meddelande", RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"^-{3,}\s*Original Message", RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"^Begin forwarded message", RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"^Från:.*\nSkickat:", RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.IgnoreCase),
+    ];
     public ParsedEmail Parse(Message message)
     {
         var headers = message.Payload?.Headers ?? [];
@@ -18,6 +31,7 @@ public class EmailParser
         var receivedAt = DateTimeOffset.TryParse(dateStr, out var dt) ? dt.ToUniversalTime() : DateTimeOffset.UtcNow;
 
         var body = ExtractBody(message.Payload);
+        body = StripQuotedContent(body);
         var attachmentText = ExtractAttachments(message.Payload);
 
         if (!string.IsNullOrWhiteSpace(attachmentText))
@@ -53,7 +67,7 @@ public class EmailParser
         }
 
         if (part.MimeType == "text/html" && part.Body?.Data != null)
-            return DecodeBase64(part.Body.Data);
+            return StripHtml(DecodeBase64(part.Body.Data));
 
         return string.Empty;
     }
@@ -79,14 +93,20 @@ public class EmailParser
             {
                 var icsText = TryParseIcs(DecodeBase64(data));
                 if (!string.IsNullOrWhiteSpace(icsText))
+                {
+                    if (icsText.Length > MaxAttachmentTextLength) icsText = icsText[..MaxAttachmentTextLength] + "…";
                     sb.AppendLine($"[ICS-bilaga: {filename}]\n{icsText}");
+                }
             }
             else if (mimeType == "application/pdf" || filename.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 var pdfText = TryExtractPdf(Convert.FromBase64String(
                     data.Replace('-', '+').Replace('_', '/')));
                 if (!string.IsNullOrWhiteSpace(pdfText))
+                {
+                    if (pdfText.Length > MaxAttachmentTextLength) pdfText = pdfText[..MaxAttachmentTextLength] + "…";
                     sb.AppendLine($"[PDF-bilaga: {filename}]\n{pdfText}");
+                }
             }
         }
 
@@ -132,6 +152,31 @@ public class EmailParser
         {
             return string.Empty;
         }
+    }
+
+    private static string StripHtml(string html)
+    {
+        var result = Regex.Replace(html, @"<br\s*/?>|</p>|</div>|</li>|</tr>", "\n", RegexOptions.IgnoreCase);
+        result = Regex.Replace(result, @"<[^>]+>", " ");
+        result = result
+            .Replace("&nbsp;", " ").Replace("&amp;", "&").Replace("&lt;", "<")
+            .Replace("&gt;", ">").Replace("&quot;", "\"").Replace("&#39;", "'");
+        result = Regex.Replace(result, @"[ \t]+", " ");
+        result = Regex.Replace(result, @"\n{3,}", "\n\n");
+        return result.Trim();
+    }
+
+    private static string StripQuotedContent(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return body;
+        var earliest = int.MaxValue;
+        foreach (var pattern in QuotedContentPatterns)
+        {
+            var match = pattern.Match(body);
+            if (match.Success && match.Index < earliest)
+                earliest = match.Index;
+        }
+        return earliest < int.MaxValue ? body[..earliest].TrimEnd() : body;
     }
 
     private static string DecodeBase64(string base64Url)

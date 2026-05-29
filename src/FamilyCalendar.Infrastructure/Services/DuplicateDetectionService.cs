@@ -9,29 +9,39 @@ public class DuplicateDetectionService(IEventRepository eventRepo, ILogger<Dupli
 {
     private const int FuzzyTitleThreshold = 85;
 
-    public async Task<bool> IsDuplicateAsync(CalendarEvent candidate, CancellationToken ct = default)
+    public async Task<CalendarEvent?> FindMatchAsync(CalendarEvent candidate, CancellationToken ct = default)
     {
         var from = candidate.StartTime.Date.AddDays(-1);
         var to = candidate.StartTime.Date.AddDays(1);
 
-        var existing = await eventRepo.GetByDateRangeAsync(
-            new DateTimeOffset(from, TimeSpan.Zero),
-            new DateTimeOffset(to.AddDays(1), TimeSpan.Zero),
-            candidate.FamilyMemberName, ct);
+        // Query separately for each family member so "Vera, Tage" matches events
+        // stored individually as "Vera" or "Tage" as well as the joined form.
+        var members = candidate.FamilyMemberName
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        foreach (var evt in existing)
+        var seen = new HashSet<Guid>();
+        foreach (var member in members)
         {
-            if (IsDuplicate(candidate, evt))
+            var memberEvents = await eventRepo.GetByDateRangeAsync(
+                new DateTimeOffset(from, TimeSpan.Zero),
+                new DateTimeOffset(to.AddDays(1), TimeSpan.Zero),
+                member, ct);
+
+            foreach (var evt in memberEvents)
             {
-                logger.LogInformation("Duplicate found: {Candidate} matches {Existing}", candidate.Title, evt.Title);
-                return true;
+                if (!seen.Add(evt.Id)) continue; // deduplicate
+                if (IsMatch(candidate, evt))
+                {
+                    logger.LogInformation("Match found: '{Candidate}' matches existing '{Existing}'", candidate.Title, evt.Title);
+                    return evt;
+                }
             }
         }
 
-        return false;
+        return null;
     }
 
-    private static bool IsDuplicate(CalendarEvent candidate, CalendarEvent existing)
+    private static bool IsMatch(CalendarEvent candidate, CalendarEvent existing)
     {
         if (candidate.FamilyMemberName != existing.FamilyMemberName) return false;
 

@@ -9,4 +9,5 @@
   <Project Path="src/FamilyCalendar.ServiceDefaults/FamilyCalendar.ServiceDefaults.csproj" />
   <Project Path="tests/FamilyCalendar.IntegrationTests/FamilyCalendar.IntegrationTests.csproj" />
   <Project Path="tests/FamilyCalendar.UnitTests/FamilyCalendar.UnitTests.csproj" />
+  <Project Path="tools/GetRefreshToken/GetRefreshToken.csproj" />
 </Solution>

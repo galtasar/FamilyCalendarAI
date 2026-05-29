@@ -49,6 +49,7 @@ export const rejectEvent = (id: string) => api.post(`/api/events/${id}/reject`).
 export const updateEvent = (id: string, data: Partial<CalendarEvent>) => api.patch(`/api/events/${id}`, data).then(r => r.data)
 export const getFamilyMembers = () => api.get<FamilyMember[]>('/api/familymembers').then(r => r.data)
 export const updateFamilyMember = (id: string, data: { description?: string }) => api.patch<FamilyMember>(`/api/familymembers/${id}`, data).then(r => r.data)
+export const syncEmails = () => api.post('/api/sync-emails').then(r => r.data)
 export const getReviewQuestions = (eventId: string) => api.get<ReviewQuestion[]>(`/api/events/${eventId}/review-questions`).then(r => r.data)
 export const answerReviewQuestion = (eventId: string, familyMemberName: string, newInfo: string) =>
   api.post(`/api/events/${eventId}/answer-question`, { familyMemberName, newInfo }).then(r => r.data)

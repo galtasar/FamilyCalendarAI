@@ -16,5 +16,7 @@ public class CalendarEvent
     public string? ReviewQuestionsJson { get; set; }
     public Core.Enums.EventStatus Status { get; set; }
     public bool NeedsReview { get; set; }
+    public bool HasTime { get; set; }
+    public string? SyncError { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

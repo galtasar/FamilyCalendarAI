@@ -36,7 +36,7 @@ public class GmailPollingService(
         }
     }
 
-    private async Task PollAsync(CancellationToken ct)
+    public async Task PollAsync(CancellationToken ct)
     {
         var labelId = await gmailClient.EnsureLabelExistsAsync(options.Value.ProcessedLabelName);
         var messages = await gmailClient.ListUnprocessedMessagesAsync(labelId);

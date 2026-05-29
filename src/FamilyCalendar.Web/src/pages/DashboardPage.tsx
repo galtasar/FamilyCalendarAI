@@ -1,15 +1,50 @@
-import { Grid, Card, CardContent, Typography, CircularProgress } from '@mui/material'
-import { useQuery } from '@tanstack/react-query'
-import { getEmails, getPendingReview, getEvents } from '../api'
+import { useState } from 'react'
+import { Grid, Card, CardContent, Typography, CircularProgress, Button, Alert, Stack } from '@mui/material'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { getEmails, getPendingReview, getEvents, syncEmails } from '../api'
 
 export default function DashboardPage() {
+  const qc = useQueryClient()
   const { data: emails, isLoading: loadingEmails } = useQuery({ queryKey: ['emails'], queryFn: getEmails })
   const { data: pending, isLoading: loadingPending } = useQuery({ queryKey: ['pending'], queryFn: getPendingReview })
   const { data: events, isLoading: loadingEvents } = useQuery({ queryKey: ['events'], queryFn: () => getEvents() })
 
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState(false)
+  const [syncDone, setSyncDone] = useState(false)
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncError(false)
+    setSyncDone(false)
+    try {
+      await syncEmails()
+      await qc.invalidateQueries()
+      setSyncDone(true)
+    } catch {
+      setSyncError(true)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <>
-      <Typography variant="h4" gutterBottom>Översikt</Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
+        <Typography variant="h4">Översikt</Typography>
+        <Stack direction="row" spacing={2} alignItems="center">
+          {syncDone && <Alert severity="success" sx={{ py: 0 }}>Synkronisering klar!</Alert>}
+          {syncError && <Alert severity="error" sx={{ py: 0 }}>Synkronisering misslyckades.</Alert>}
+          <Button
+            variant="contained"
+            onClick={handleSync}
+            disabled={syncing}
+            startIcon={syncing ? <CircularProgress size={16} color="inherit" /> : null}
+          >
+            {syncing ? 'Hämtar mail...' : '🔄 Synka mail'}
+          </Button>
+        </Stack>
+      </Stack>
       <Grid container spacing={3}>
         <Grid item xs={4}>
           <Card>

@@ -8,7 +8,7 @@ const familyMemberColor: Record<string, 'primary' | 'secondary' | 'success' | 'w
 }
 
 export default function ReviewPage() {
-  const { data, isLoading } = useQuery({ queryKey: ['pending'], queryFn: getPendingReview })
+  const { data, isLoading, isError } = useQuery({ queryKey: ['pending'], queryFn: getPendingReview })
   const qc = useQueryClient()
   const navigate = useNavigate()
 
@@ -22,6 +22,7 @@ export default function ReviewPage() {
   })
 
   if (isLoading) return <CircularProgress />
+  if (isError) return <Alert severity="error">Kunde inte hämta granskningslistan. Försök igen senare.</Alert>
 
   return (
     <>
@@ -37,7 +38,9 @@ export default function ReviewPage() {
               </Stack>
               <Typography variant="h6">{evt.title}</Typography>
               <Typography color="text.secondary">
-                {new Date(evt.startTime).toLocaleString('sv-SE', { dateStyle: 'full', timeStyle: 'short' })}
+                {evt.endTime
+                  ? new Date(evt.startTime).toLocaleString('sv-SE', { dateStyle: 'full', timeStyle: 'short' })
+                  : `${new Date(evt.startTime).toLocaleDateString('sv-SE', { dateStyle: 'full' })} • Heldag (tid saknas)`}
                 {evt.location ? ` • ${evt.location}` : ''}
               </Typography>
               {evt.description && <Typography variant="body2" mt={1}>{evt.description}</Typography>}

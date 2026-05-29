@@ -6,22 +6,27 @@ namespace FamilyCalendar.UnitTests;
 public class AiAnalysisResultDeserializationTests
 {
     [Fact]
-    public void Deserialize_FullResult_MapsAllFields()
+    public void Deserialize_SingleEvent_MapsAllFields()
     {
         var json = """
             {
               "relevant": true,
               "confidence": 0.93,
-              "children": ["Vera"],
-              "event_type": "Föräldramöte",
-              "title": "Föräldramöte klass 5",
-              "start": "2026-09-14T18:00:00+02:00",
-              "end": "2026-09-14T19:30:00+02:00",
-              "location": "Vattholmaskolan",
-              "requires_calendar_event": true,
-              "requires_manual_review": false,
-              "is_recurring": false,
-              "summary": "Föräldramöte för Vera"
+              "summary": "Föräldramöte för Vera",
+              "events": [
+                {
+                  "family_members": ["Vera"],
+                  "event_type": "Föräldramöte",
+                  "title": "Föräldramöte klass 5",
+                  "start": "2026-09-14T18:00:00+02:00",
+                  "end":   "2026-09-14T19:30:00+02:00",
+                  "has_time": true,
+                  "location": "Vattholmaskolan",
+                  "requires_manual_review": false,
+                  "is_recurring": false,
+                  "summary": "Föräldramöte för Vera"
+                }
+              ]
             }
             """;
 
@@ -30,26 +35,66 @@ public class AiAnalysisResultDeserializationTests
         Assert.NotNull(result);
         Assert.True(result.Relevant);
         Assert.Equal(0.93, result.Confidence);
-        Assert.Equal(["Vera"], result.FamilyMembers);
-        Assert.Equal("Föräldramöte klass 5", result.Title);
-        Assert.Equal("Vattholmaskolan", result.Location);
-        Assert.True(result.RequiresCalendarEvent);
-        Assert.False(result.RequiresManualReview);
-        Assert.False(result.IsRecurring);
-        Assert.NotNull(result.Start);
+        Assert.Single(result.Events);
+
+        var evt = result.Events[0];
+        Assert.Equal(["Vera"], evt.FamilyMembers);
+        Assert.Equal("Föräldramöte klass 5", evt.Title);
+        Assert.Equal("Vattholmaskolan", evt.Location);
+        Assert.True(evt.HasTime);
+        Assert.False(evt.RequiresManualReview);
+        Assert.False(evt.IsRecurring);
+        Assert.NotNull(evt.Start);
+        Assert.NotNull(evt.End);
     }
 
     [Fact]
-    public void Deserialize_IrrelevantEmail_ReturnsNotRelevant()
+    public void Deserialize_MultipleEvents_MapsEachItem()
+    {
+        var json = """
+            {
+              "relevant": true,
+              "confidence": 0.95,
+              "events": [
+                {
+                  "family_members": ["Vera"],
+                  "title": "Skansenutflykt",
+                  "start": "2026-05-28T08:15:00+02:00",
+                  "end":   "2026-05-28T16:30:00+02:00",
+                  "has_time": true,
+                  "requires_manual_review": false,
+                  "is_recurring": false
+                },
+                {
+                  "family_members": ["Tage"],
+                  "title": "Friidrottsdag",
+                  "start": "2026-05-26T08:10:00+02:00",
+                  "end":   "2026-05-26T13:20:00+02:00",
+                  "has_time": true,
+                  "requires_manual_review": false,
+                  "is_recurring": false
+                }
+              ]
+            }
+            """;
+
+        var result = JsonSerializer.Deserialize<AiAnalysisResult>(json);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result.Events.Count);
+        Assert.Equal("Skansenutflykt", result.Events[0].Title);
+        Assert.Equal("Friidrottsdag", result.Events[1].Title);
+    }
+
+    [Fact]
+    public void Deserialize_IrrelevantEmail_HasEmptyEvents()
     {
         var json = """
             {
               "relevant": false,
               "confidence": 1.0,
-              "children": [],
-              "requires_calendar_event": false,
-              "requires_manual_review": false,
-              "is_recurring": false
+              "summary": null,
+              "events": []
             }
             """;
 
@@ -57,8 +102,7 @@ public class AiAnalysisResultDeserializationTests
 
         Assert.NotNull(result);
         Assert.False(result.Relevant);
-        Assert.False(result.RequiresCalendarEvent);
-        Assert.Empty(result.FamilyMembers);
+        Assert.Empty(result.Events);
     }
 
     [Fact]
@@ -68,19 +112,25 @@ public class AiAnalysisResultDeserializationTests
             {
               "relevant": true,
               "confidence": 0.75,
-              "children": ["Tage"],
-              "requires_calendar_event": true,
-              "requires_manual_review": true,
-              "is_recurring": false
+              "events": [
+                {
+                  "family_members": ["Tage"],
+                  "has_time": false,
+                  "requires_manual_review": true,
+                  "is_recurring": false
+                }
+              ]
             }
             """;
 
         var result = JsonSerializer.Deserialize<AiAnalysisResult>(json);
 
         Assert.NotNull(result);
-        Assert.Null(result.Title);
-        Assert.Null(result.Location);
-        Assert.Null(result.Start);
-        Assert.Null(result.End);
+        Assert.Single(result.Events);
+        var evt = result.Events[0];
+        Assert.Null(evt.Title);
+        Assert.Null(evt.Location);
+        Assert.Null(evt.Start);
+        Assert.Null(evt.End);
     }
 }

@@ -60,7 +60,18 @@ public class EmailProcessingService(
         var eventRepo = scope.ServiceProvider.GetRequiredService<IEventRepository>();
 
         var familyMembers = await familyMemberRepo.GetAllAsync(ct);
-        var result = await analyzer.AnalyzeAsync(email, familyMembers, ct);
+
+        AiAnalysisResult? result = null;
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            result = await analyzer.AnalyzeAsync(email, familyMembers, ct);
+            if (result != null) break;
+            if (attempt < 3)
+            {
+                logger.LogWarning("AI analysis returned null for {MessageId}, retrying (attempt {Attempt}/3)", email.MessageId, attempt);
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), ct);
+            }
+        }
 
         email.ProcessedAt = DateTimeOffset.UtcNow;
 
@@ -83,7 +94,7 @@ public class EmailProcessingService(
         }
 
         var events = await decisionService.ProcessAsync(email, result, ct);
-        var profileAnalysis = await familyMemberProfileAnalyzer.AnalyzeAsync(email.Subject, email.Body, familyMembers, ct);
+        var profileAnalysis = await familyMemberProfileAnalyzer.AnalyzeAsync(email.Sender, email.Subject, email.Body, familyMembers, ct);
 
         if (profileAnalysis != null)
         {
@@ -105,21 +116,61 @@ public class EmailProcessingService(
             await notificationService.SendReviewNotificationAsync(evt, ct);
         }
 
-        foreach (var evt in events.Where(e => !e.NeedsReview))
+        foreach (var evt in events)
         {
-            try
+            if (evt.Status == EventStatus.Rejected && evt.CalendarEventId != null)
             {
-                var calendarEventId = await calendarService.CreateEventAsync(evt);
-                evt.CalendarEventId = calendarEventId;
-                evt.Status = EventStatus.Created;
-                await eventRepo.UpdateAsync(evt, ct);
-                logger.LogInformation("Auto-created calendar event for {Title}", evt.Title);
+                // Cancellation — remove from Google Calendar
+                try
+                {
+                    await calendarService.DeleteEventAsync(evt);
+                    evt.CalendarEventId = null;
+                    evt.SyncError = null;
+                    await eventRepo.UpdateAsync(evt, ct);
+                    logger.LogInformation("Deleted cancelled event '{Title}' from Google Calendar", evt.Title);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to delete cancelled event '{Title}' from Google Calendar", evt.Title);
+                    evt.SyncError = ex.Message;
+                    await eventRepo.UpdateAsync(evt, ct);
+                }
             }
-            catch (Exception ex)
+            else if (evt.CalendarEventId != null)
             {
-                logger.LogError(ex, "Failed to create calendar event for {Title}", evt.Title);
-                evt.Status = EventStatus.Failed;
-                await eventRepo.UpdateAsync(evt, ct);
+                // Existing Google Calendar event — push the merged update
+                try
+                {
+                    await calendarService.UpdateEventAsync(evt);
+                    evt.SyncError = null;
+                    await eventRepo.UpdateAsync(evt, ct);
+                    logger.LogInformation("Updated calendar event for '{Title}'", evt.Title);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to update calendar event for '{Title}'", evt.Title);
+                    evt.SyncError = ex.Message;
+                    await eventRepo.UpdateAsync(evt, ct);
+                }
+            }
+            else if (!evt.NeedsReview)
+            {
+                try
+                {
+                    var calendarEventId = await calendarService.CreateEventAsync(evt);
+                    evt.CalendarEventId = calendarEventId;
+                    evt.Status = EventStatus.Created;
+                    evt.SyncError = null;
+                    await eventRepo.UpdateAsync(evt, ct);
+                    logger.LogInformation("Auto-created calendar event for {Title}", evt.Title);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to create calendar event for {Title}", evt.Title);
+                    evt.Status = EventStatus.Failed;
+                    evt.SyncError = ex.Message;
+                    await eventRepo.UpdateAsync(evt, ct);
+                }
             }
         }
     }

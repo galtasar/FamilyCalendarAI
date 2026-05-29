@@ -3,6 +3,7 @@ using FamilyCalendar.Core.Interfaces;
 using FamilyCalendar.Core.Models;
 using FamilyCalendar.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using EmailModel = FamilyCalendar.Core.Models.Email;
 
@@ -14,7 +15,9 @@ public class EventDecisionServiceTests
     private readonly Mock<IDuplicateDetectionService> _dupMock = new();
 
     private EventDecisionService CreateSut() =>
-        new(_eventRepoMock.Object, _dupMock.Object, NullLogger<EventDecisionService>.Instance);
+        new(_eventRepoMock.Object, _dupMock.Object,
+            Options.Create(new EventDecisionOptions()),
+            NullLogger<EventDecisionService>.Instance);
 
     private static EmailModel MakeEmail() => new()
     {
@@ -26,10 +29,37 @@ public class EventDecisionServiceTests
         ReceivedAt = DateTimeOffset.UtcNow
     };
 
+    private static AiAnalysisResult MakeResult(bool relevant, double confidence, params AiEventDraft[] events) =>
+        new() { Relevant = relevant, Confidence = confidence, Events = [.. events] };
+
+    private static CalendarEvent MakeExistingEvent(string title, string familyMember, DateTimeOffset start,
+        string? calendarEventId = null, string? description = null, string? location = null) => new()
+    {
+        Id = Guid.NewGuid(),
+        EmailId = Guid.NewGuid(),
+        Title = title,
+        FamilyMemberName = familyMember,
+        StartTime = start,
+        Description = description,
+        Location = location,
+        CalendarEventId = calendarEventId,
+        Status = calendarEventId != null ? EventStatus.Created : EventStatus.Pending,
+        CreatedAt = DateTimeOffset.UtcNow
+    };
+
     [Fact]
     public async Task ProcessAsync_IrrelevantEmail_ReturnsEmpty()
     {
-        var result = new AiAnalysisResult { Relevant = false, RequiresCalendarEvent = false };
+        var result = MakeResult(relevant: false, confidence: 1.0);
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+        Assert.Empty(events);
+        _eventRepoMock.Verify(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_RelevantButNoEvents_ReturnsEmpty()
+    {
+        var result = MakeResult(relevant: true, confidence: 1.0);
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
         Assert.Empty(events);
         _eventRepoMock.Verify(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -38,17 +68,17 @@ public class EventDecisionServiceTests
     [Fact]
     public async Task ProcessAsync_HighConfidence_AutoApproves()
     {
-        _dupMock.Setup(d => d.IsDuplicateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(false);
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
         _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
 
-        var result = new AiAnalysisResult
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
         {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.95,
             FamilyMembers = ["Vera"], Title = "Föräldramöte",
-            Start = DateTimeOffset.UtcNow.AddDays(7), HasTime = true
-        };
+            Start = DateTimeOffset.UtcNow.AddDays(7), End = DateTimeOffset.UtcNow.AddDays(7).AddHours(1),
+            HasTime = true
+        });
 
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
 
@@ -60,37 +90,37 @@ public class EventDecisionServiceTests
     [Fact]
     public async Task ProcessAsync_LowConfidence_RequiresReview()
     {
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
         _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
 
-        var result = new AiAnalysisResult
+        var result = MakeResult(relevant: true, confidence: 0.65, new AiEventDraft
         {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.65,
             FamilyMembers = ["Tage"], Title = "Träning",
-            Start = DateTimeOffset.UtcNow.AddDays(3)
-        };
+            Start = DateTimeOffset.UtcNow.AddDays(3), HasTime = true
+        });
 
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
 
         Assert.Single(events);
         Assert.True(events[0].NeedsReview);
         Assert.Equal(EventStatus.Pending, events[0].Status);
-        // Duplicate check should NOT be called for review-flagged events
-        _dupMock.Verify(d => d.IsDuplicateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task ProcessAsync_RecurringEvent_RequiresReview()
     {
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
         _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
 
-        var result = new AiAnalysisResult
+        var result = MakeResult(relevant: true, confidence: 0.92, new AiEventDraft
         {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.92,
             FamilyMembers = ["Sixten"], Title = "Simskola", IsRecurring = true,
-            Start = DateTimeOffset.UtcNow.AddDays(5)
-        };
+            Start = DateTimeOffset.UtcNow.AddDays(5), HasTime = true
+        });
 
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
 
@@ -99,39 +129,178 @@ public class EventDecisionServiceTests
     }
 
     [Fact]
-    public async Task ProcessAsync_MultipleFamilyMembers_CreatesEventPerFamilyMember()
+    public async Task ProcessAsync_MultipleFamilyMembers_CreatesSingleEventWithJoinedNames()
     {
-        _dupMock.Setup(d => d.IsDuplicateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(false);
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
         _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
 
-        var result = new AiAnalysisResult
+        var result = MakeResult(relevant: true, confidence: 0.88, new AiEventDraft
         {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.88,
             FamilyMembers = ["Vera", "Tage"], Title = "Studiedag",
-            Start = DateTimeOffset.UtcNow.AddDays(10)
-        };
+            Start = DateTimeOffset.UtcNow.AddDays(10), HasTime = true
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        Assert.Single(events);
+        Assert.Equal("Vera, Tage", events[0].FamilyMemberName);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MultipleEventDrafts_CreatesOnePerDraft()
+    {
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
+        _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
+
+        var result = MakeResult(relevant: true, confidence: 0.95,
+            new AiEventDraft
+            {
+                FamilyMembers = ["Vera"], Title = "Skansenutflykt",
+                Start = DateTimeOffset.UtcNow.AddDays(3), HasTime = true
+            },
+            new AiEventDraft
+            {
+                FamilyMembers = ["Tage"], Title = "Friidrottsdag",
+                Start = DateTimeOffset.UtcNow.AddDays(5), HasTime = true
+            });
 
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
 
         Assert.Equal(2, events.Count);
-        Assert.Contains(events, e => e.FamilyMemberName == "Vera");
-        Assert.Contains(events, e => e.FamilyMemberName == "Tage");
+        Assert.Contains(events, e => e.Title == "Skansenutflykt");
+        Assert.Contains(events, e => e.Title == "Friidrottsdag");
     }
 
     [Fact]
-    public async Task ProcessAsync_Duplicate_SkipsEvent()
+    public async Task ProcessAsync_PureDuplicate_SkipsEvent()
     {
-        _dupMock.Setup(d => d.IsDuplicateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(true);
+        var start = DateTimeOffset.UtcNow.AddDays(2);
+        var existing = MakeExistingEvent("Utflykt", "Folke", start, description: "Inga nyheter");
 
-        var result = new AiAnalysisResult
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+
+        var result = MakeResult(relevant: true, confidence: 0.90, new AiEventDraft
         {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.90,
             FamilyMembers = ["Folke"], Title = "Utflykt",
-            Start = DateTimeOffset.UtcNow.AddDays(2), HasTime = true
-        };
+            Start = start, HasTime = true,
+            Summary = "Inga nyheter" // same description — pure duplicate
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        Assert.Empty(events);
+        _eventRepoMock.Verify(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+        _eventRepoMock.Verify(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MatchWithNewDescription_UpdatesExistingPendingEvent_ReturnsNull()
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(5);
+        var existing = MakeExistingEvent("Utflykt", "Vera", start, calendarEventId: null, description: "Grundinfo");
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        var result = MakeResult(relevant: true, confidence: 0.92, new AiEventDraft
+        {
+            FamilyMembers = ["Vera"], Title = "Utflykt",
+            Start = start, HasTime = true,
+            Summary = "Ta med gympaskor" // new info
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        // Pending event — no return, just updated in DB
+        Assert.Empty(events);
+        _eventRepoMock.Verify(r => r.UpdateAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains("Ta med gympaskor", existing.Description);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MatchWithNewDescriptionAndCalendarEventId_ReturnsEventForCalendarUpdate()
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(5);
+        var existing = MakeExistingEvent("Utflykt", "Vera", start, calendarEventId: "gcal-123", description: "Grundinfo");
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        var result = MakeResult(relevant: true, confidence: 0.92, new AiEventDraft
+        {
+            FamilyMembers = ["Vera"], Title = "Utflykt",
+            Start = start, HasTime = true,
+            Summary = "Ta med gympaskor"
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        // Already in Google Calendar — returned so caller can push update
+        Assert.Single(events);
+        Assert.Equal("gcal-123", events[0].CalendarEventId);
+        Assert.Contains("Ta med gympaskor", events[0].Description);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MatchWithNewFamilyMember_MergesMemberNames()
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(3);
+        var existing = MakeExistingEvent("Studiedag", "Vera", start, calendarEventId: "gcal-456");
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
+        {
+            FamilyMembers = ["Vera", "Tage"], Title = "Studiedag",
+            Start = start, HasTime = true
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        Assert.Single(events);
+        Assert.Contains("Tage", events[0].FamilyMemberName);
+        Assert.Contains("Vera", events[0].FamilyMemberName);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MissingDate_RequiresReview()
+    {
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
+        _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
+
+        var result = MakeResult(relevant: true, confidence: 0.90, new AiEventDraft
+        {
+            FamilyMembers = ["Vera"], Title = "Möte", Start = null, HasTime = false
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        Assert.Single(events);
+        Assert.True(events[0].NeedsReview);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_NoFamilyMembers_SkipsEvent()
+    {
+        var result = MakeResult(relevant: true, confidence: 0.92, new AiEventDraft
+        {
+            FamilyMembers = [], Title = "Aktivitet",
+            Start = DateTimeOffset.UtcNow.AddDays(4), HasTime = true
+        });
 
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
 
@@ -140,39 +309,73 @@ public class EventDecisionServiceTests
     }
 
     [Fact]
-    public async Task ProcessAsync_MissingDate_RequiresReview()
+    public async Task ProcessAsync_CancelAction_NoMatch_ReturnsEmpty()
     {
-        _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-                      .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((CalendarEvent?)null);
 
-        var result = new AiAnalysisResult
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
         {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.90,
-            FamilyMembers = ["Vera"], Title = "Möte",
-            Start = null  // No date
-        };
-
-        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
-
-        Assert.Single(events);
-        Assert.True(events[0].NeedsReview);
-    }
-
-    [Fact]
-    public async Task ProcessAsync_NoFamilyMembers_RequiresReview()
-    {
-        _eventRepoMock.Setup(r => r.AddAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-                      .ReturnsAsync((CalendarEvent e, CancellationToken _) => e);
-
-        var result = new AiAnalysisResult
-        {
-            Relevant = true, RequiresCalendarEvent = true, Confidence = 0.92,
-            FamilyMembers = [], Title = "Aktivitet",
-            Start = DateTimeOffset.UtcNow.AddDays(4)
-        };
+            Action = "cancel",
+            FamilyMembers = ["Vera"], Title = "Utflykt",
+            Start = DateTimeOffset.UtcNow.AddDays(3), HasTime = true
+        });
 
         var events = await CreateSut().ProcessAsync(MakeEmail(), result);
 
         Assert.Empty(events);
+        _eventRepoMock.Verify(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_CancelAction_PendingMatch_MarksRejectedReturnsNull()
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(3);
+        var existing = MakeExistingEvent("Utflykt", "Vera", start, calendarEventId: null);
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
+        {
+            Action = "cancel",
+            FamilyMembers = ["Vera"], Title = "Utflykt",
+            Start = start, HasTime = true
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        // Pending event — marked Rejected in DB, not returned (no Google Calendar to delete from)
+        Assert.Empty(events);
+        Assert.Equal(EventStatus.Rejected, existing.Status);
+        _eventRepoMock.Verify(r => r.UpdateAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_CancelAction_CreatedMatch_ReturnsEventForCalendarDeletion()
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(3);
+        var existing = MakeExistingEvent("Utflykt", "Vera", start, calendarEventId: "gcal-789");
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
+        {
+            Action = "cancel",
+            FamilyMembers = ["Vera"], Title = "Utflykt",
+            Start = start, HasTime = true
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        // Event is in Google Calendar — returned with Rejected status so caller can delete it
+        Assert.Single(events);
+        Assert.Equal(EventStatus.Rejected, events[0].Status);
+        Assert.Equal("gcal-789", events[0].CalendarEventId);
     }
 }

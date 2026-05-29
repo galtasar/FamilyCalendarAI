@@ -17,61 +17,149 @@ public class OpenAiOptions
 public class EmailAnalyzer(IOptions<OpenAiOptions> options, ILogger<EmailAnalyzer> logger)
 {
     private static readonly string SystemPrompt = """
-        Du analyserar e-post relaterade till familjemedlemmars skolor, förskolor och aktiviteter.
+        Du analyserar e-post relaterade till en familjs aktiviteter, möten och åtaganden.
 
-        Familjen består av:
-        - Vera och Tage går på skolan (grundskola)
-        - Sixten och Folke går på förskolan
-        - Micke och Emelie är föräldrar
-        Om ett mail gäller "skolan" eller "klassen" UTAN att namnge specifik klass/årskurs, identifiera ALLA som går på den skolan.
-        Om ett mail namnger en specifik klass eller årskurs (t.ex. "klass 5", "årskurs 3", "5A"), MÅSTE du använda familjemedlemsprofilerna nedan för att avgöra vilken/vilka familjemedlemmar som tillhör just den klassen — inkludera INTE familjemedlemmar från andra klasser.
-        Om ett mail gäller "förskolan" identifiera ALLA som går på förskolan.
-        Om ett mail gäller samtliga familjemedlemmar, returnera ["Vera", "Tage", "Sixten", "Folke"].
-        Om det är oklart vem/vilka som berörs, returnera tom lista [].
+        Familjemedlemmarna definieras enbart av profilerna som skickas med varje mail.
+        Gör INGA antaganden om vem som är barn, vuxen, förälder eller om vem som går
+        på skola/förskola/jobb baserat på namn — använd alltid profiltexten.
 
-        Målet är att avgöra om ett kalenderevent behöver skapas.
+        Regler för att avgöra vilka familjemedlemmar ett mail berör:
+        - Avsändaren är en stark ledtråd. Om avsändarens namn eller e-postadress nämns
+          i en familjemedlems profil — t.ex. "Veras klassföreståndare heter Sabina
+          Danielsson (sabina.danielsson@vattholmaskolan.se)" eller "Tages fotbollstränare
+          är Hans Larsson" — så hör mailet till den familjemedlemmen. Använd detta
+          tillsammans med övriga regler nedan; det kan stärka eller motbevisa en klass-
+          markör om båda finns.
+        - Matcha mailet mot profilerna utifrån skola, klass, förskola, avdelning, arbetsplats,
+          mottagningsställe, aktivitet, klubb eller annan kontext som nämns i mailet.
+        - Klassbeteckningar — börja ALLTID med att leta efter dessa innan du läser brödtexten:
+            * "klass 5", "klass 3", "5A", "5B", "åk 5", "årskurs 3" → exakt den klassen.
+            * Ämnesrader på formen "Inför vecka X - N", "Veckobrev N", "Info klass N",
+              "- N" där N är ett heltal 1–9 → klass N. Den efterföljande siffran är
+              klassens årskurs, inte ett datum eller annat.
+            * Om ämnesraden har en sådan klassmarkör, använd ENDAST den klassen och
+              ignorera tvetydigheter i brödtexten.
+        - Om mailet namnger en specifik klass/årskurs/avdelning enligt ovan, inkludera
+          ENDAST de familjemedlemmar vars profil uttryckligen matchar den klassen.
+          Inkludera INTE syskon från andra klasser även om samma skola nämns.
+        - Om mailet gäller en hel institution (skola, förskola, arbetsplats, klubb)
+          UTAN att specificera klass/avdelning, inkludera ALLA familjemedlemmar vars
+          profil pekar på den institutionen.
+        - Om mailet är personligt adresserat till en specifik familjemedlem (t.ex.
+          påminnelse om läkartid, terapi, möte), returnera bara den personen.
+        - Om mailet gäller hela familjen, returnera samtliga familjemedlemmar.
+        - Om ingen profil matchar, returnera tom lista [].
 
-        Identifiera:
-        - vilka familjemedlemmar mailet gäller — kan vara en, flera eller alla
-        - datum och tider
-        - aktivitet
-        - plats
-        - om kalenderhändelse krävs
-        - hur säker du är (confidence 0.0-1.0)
-        - om aktiviteten är återkommande (is_recurring)
+        Behandla ALLA familjemedlemmar likvärdigt. Vuxnas möten, terapi, läkarbesök,
+        arbetsåtaganden och privata aktiviteter ska kalenderläggas på samma sätt som
+        barns aktiviteter. Det finns ingen åldersgräns för vad som räknas som en
+        kalenderhändelse.
+
+        Målet är att producera en LISTA av kalenderhändelser som ska skapas, avbokas eller
+        uppdateras baserat på mailet. Ett enskilt mail kan beskriva flera olika händelser —
+        t.ex. ett veckobrev från skolan kan nämna utflykt på måndag, friidrottsdag på onsdag
+        och föräldramöte på torsdag. Returnera då ETT objekt PER händelse i "events"-listan.
+        Om mailet inte beskriver någon konkret kalenderhändelse alls, returnera "events": [].
+
+        VIKTIGT om avbokningar och inställda händelser:
+        Om mailet meddelar att en händelse ÄR INSTÄLLD, AVBOKAD eller AVBRUTEN (t.ex.
+        "Vi ställer in onsdagens utflykt", "Föräldramötet den 15:e är inställt",
+        "Träningen ställs in p.g.a. sjukdom"): sätt "action" = "cancel" för den händelsen.
+        Inkludera titel, datum och familjemedlemmar precis som för en vanlig händelse.
+        För alla händelser som ska SKAPAS, använd "action" = "create" (default).
+
+        En kalenderhändelse innebär: en specifik tidpunkt eller dag, kopplad till minst en
+        identifierad familjemedlem, som hen förväntas delta i eller behöver känna till.
+
+        För VARJE händelse i listan, identifiera:
+        - action (create eller cancel)
+        - vilka familjemedlemmar händelsen gäller (family_members)
+        - datum och tider (start, end, has_time)
+        - aktivitet (event_type, title)
+        - plats (location)
+        - om händelsen är återkommande (is_recurring)
+        - om händelsen behöver granskas manuellt (requires_manual_review)
+        - kort sammanfattning (summary)
+
+        På toppnivå anger du:
+        - relevant: true om mailet innehåller något av intresse för familjen
+        - confidence: 0.0–1.0 hur säker du är på tolkningen som helhet
+        - summary: kort sammanfattning av mailet (valfritt, null om ej användbart)
 
         VIKTIGT om datum och tider:
-        - Om mailet innehåller en specifik starttid (t.ex. "kl 14:00", "10:30"), MÅSTE du inkludera den i "start" som fullständig ISO8601 med tid (t.ex. "2026-05-20T14:00:00").
-        - Sätt "has_time" till true om ett specifikt klockslag finns, annars false.
-        - Om "has_time" är false (bara datum känt), sätt "requires_manual_review" till true.
-        - Om "end" saknas i mailet, UPPSKATTA sluttid baserat på händelsetyp:
-            * Fotbollsmatch/ishockeymatch/match: starttid + 90 minuter
-            * Träning/övning: starttid + 75 minuter
-            * Skolavslutning/uppträdande/konsert: starttid + 90 minuter
-            * Föräldramöte/möte: starttid + 60 minuter
-            * Utflykt/heldagsaktivitet: starttid + 6 timmar
-            * Läkarbesök/tandläkare: starttid + 60 minuter
-            * Kalas/fest: starttid + 120 minuter
-            * Övrigt: starttid + 60 minuter
+
+        1. Vad räknas som ett klockslag?
+           ALLT som anger en tid på dygnet räknas, oavsett skiljetecken (kolon eller punkt):
+           "kl 14:00", "10:30", "13.20", "13.40", "samling 08:10", "bussen går 13.20 hem",
+           "vi börjar kl 9", "fika 14-16". Samlings-, buss-, ankomst- och hemresetider
+           räknas också som klockslag för eventet.
+
+           Konkreta exempel — hur du ska tolka dem:
+           - Email säger "Bussen går 13.20 hem" → has_time = true, end ≈ 13:20.
+           - Email säger "Samling 8.15" → has_time = true, start ≈ 08:15.
+           - Email säger "skoldagen slutar när bussen återvänder" + "bussen 13.20" →
+             has_time = true, end ≈ 13:20 (busstiden är sluttiden).
+           - Email säger "vi åker till Skansen på onsdag" utan något klockslag →
+             has_time = false.
+
+           Sätt "has_time" = true om någon klockslagsangivelse finns någonstans i mailet.
+           Sätt "has_time" = false ENDAST när mailet inte innehåller någon tid på dygnet alls
+           (t.ex. "imorgon", "fredag", "v22", utan klockslag).
+
+        2. När has_time = true:
+           - "start" MÅSTE vara en fullständig ISO8601-sträng med tid (tidigaste relevanta
+             tidpunkt — t.ex. samlingstid hellre än lektionsstart om båda nämns).
+           - "end" får ALDRIG vara null. Använd sluttid/hemresetid om mailet anger den,
+             annars UPPSKATTA enligt händelsetyp:
+               * Fotbollsmatch / ishockeymatch / match: start + 90 min
+               * Träning / övning: start + 75 min
+               * Skolavslutning / uppträdande / konsert: start + 90 min
+               * Föräldramöte / möte / terapisession: start + 60 min
+               * Utflykt / heldagsaktivitet: start + 6 timmar
+               * Läkarbesök / tandläkare: start + 60 min
+               * Kalas / fest: start + 120 min
+               * Övrigt: start + 60 min
+
+        3. När has_time = false (mailet anger ett datum men inget klockslag):
+           - "start" MÅSTE innehålla DATUMET som ISO8601 med tid 00:00:00 — t.ex.
+             "2026-06-01T00:00:00+02:00". Detta är en DATUM-platshållare som signalerar
+             "rätt datum, klockslag saknas". Gissa ALDRIG ett klockslag.
+           - "end" MÅSTE vara null. Använd inte 6-timmars-uppskattningen eller någon
+             annan default-sluttid när has_time = false.
+           - Sätt "requires_manual_review" till true så att användaren fyller i klockslaget.
+
+        4. Om varken datum eller tid är känt (t.ex. "snart", "kommande veckor"):
+           - Sätt has_time = false, start = null, end = null, requires_manual_review = true.
+
+        5. Tidszon:
+           - Alla tider i mailet avser Europe/Stockholm. Använd ALLTID den UTC-offset som
+             användarmeddelandet anger ovan (t.ex. "+02:00" sommartid, "+01:00" vintertid).
+           - Använd ALDRIG "+00:00" eller "Z" om inte mailet uttryckligen säger UTC.
 
         Returnera ENDAST JSON enligt följande schema:
         {
           "relevant": boolean,
           "confidence": number (0.0-1.0),
-          "children": string[] (familjemedlemmar, tom lista om oklart),
-          "event_type": string | null,
-          "title": string | null,
-          "start": ISO8601 string med tid | null,
-          "end": ISO8601 string med uppskattad tid om ej angiven | null,
-          "has_time": boolean,
-          "location": string | null,
-          "requires_calendar_event": boolean,
-          "requires_manual_review": boolean,
-          "is_recurring": boolean,
-          "summary": string | null
+          "summary": string | null,
+          "events": [
+            {
+                "action": "create" | "cancel",
+                "family_members": string[] (vuxna och barn likvärdigt; tom lista om ingen profil matchar),
+              "event_type": string | null,
+              "title": string | null,
+              "start": ISO8601 string med tid (null endast om has_time = false),
+              "end": ISO8601 string med tid (null endast om has_time = false; använd uppskattning enligt händelsetyp om sluttid ej anges),
+              "has_time": boolean,
+              "location": string | null,
+              "requires_manual_review": boolean,
+              "is_recurring": boolean,
+              "summary": string | null
+            }
+          ]
         }
 
-        Om mailet inte är på svenska, returnera: {"relevant": false, "confidence": 1.0, "children": [], "requires_calendar_event": false, "requires_manual_review": false, "is_recurring": false, "has_time": false}
+        Om mailet inte är på svenska eller inte är relevant för familjen, returnera:
+        {"relevant": false, "confidence": 1.0, "summary": null, "events": []}
         """;
 
     public async Task<AiAnalysisResult?> AnalyzeAsync(Email email, IReadOnlyList<FamilyMember> familyMembers, CancellationToken ct = default)

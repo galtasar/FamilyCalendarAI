@@ -26,7 +26,7 @@ public class DuplicateDetectionServiceTests
     };
 
     [Fact]
-    public async Task IsDuplicate_ExactMatch_ReturnsTrue()
+    public async Task FindMatch_ExactMatch_ReturnsExistingEvent()
     {
         var start = new DateTimeOffset(2026, 9, 14, 18, 0, 0, TimeSpan.FromHours(2));
         var existing = MakeEvent("Föräldramöte klass 5", "Vera", start);
@@ -35,13 +35,14 @@ public class DuplicateDetectionServiceTests
                  .ReturnsAsync([existing]);
 
         var candidate = MakeEvent("Föräldramöte klass 5", "Vera", start);
-        var result = await CreateSut().IsDuplicateAsync(candidate);
+        var result = await CreateSut().FindMatchAsync(candidate);
 
-        Assert.True(result);
+        Assert.NotNull(result);
+        Assert.Equal(existing.Id, result.Id);
     }
 
     [Fact]
-    public async Task IsDuplicate_FuzzyTitleMatch_ReturnsTrue()
+    public async Task FindMatch_FuzzyTitleMatch_ReturnsExistingEvent()
     {
         var start = new DateTimeOffset(2026, 9, 14, 18, 0, 0, TimeSpan.FromHours(2));
         var existing = MakeEvent("Föräldramöte klass 5", "Vera", start);
@@ -50,40 +51,39 @@ public class DuplicateDetectionServiceTests
                  .ReturnsAsync([existing]);
 
         var candidate = MakeEvent("Föräldramöte i klass 5", "Vera", start); // slightly different title
-        var result = await CreateSut().IsDuplicateAsync(candidate);
+        var result = await CreateSut().FindMatchAsync(candidate);
 
-        Assert.True(result);
+        Assert.NotNull(result);
     }
 
     [Fact]
-    public async Task IsDuplicate_DifferentFamilyMember_ReturnsFalse()
+    public async Task FindMatch_DifferentFamilyMember_ReturnsNull()
     {
         var start = new DateTimeOffset(2026, 9, 14, 18, 0, 0, TimeSpan.FromHours(2));
-        var existing = MakeEvent("Föräldramöte", "Vera", start);
 
         _repoMock.Setup(r => r.GetByDateRangeAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), "Tage", It.IsAny<CancellationToken>()))
                  .ReturnsAsync([]);
 
         var candidate = MakeEvent("Föräldramöte", "Tage", start);
-        var result = await CreateSut().IsDuplicateAsync(candidate);
+        var result = await CreateSut().FindMatchAsync(candidate);
 
-        Assert.False(result);
+        Assert.Null(result);
     }
 
     [Fact]
-    public async Task IsDuplicate_NoExistingEvents_ReturnsFalse()
+    public async Task FindMatch_NoExistingEvents_ReturnsNull()
     {
         _repoMock.Setup(r => r.GetByDateRangeAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync([]);
 
         var candidate = MakeEvent("Simskola", "Sixten", DateTimeOffset.UtcNow.AddDays(3));
-        var result = await CreateSut().IsDuplicateAsync(candidate);
+        var result = await CreateSut().FindMatchAsync(candidate);
 
-        Assert.False(result);
+        Assert.Null(result);
     }
 
     [Fact]
-    public async Task IsDuplicate_TitleTooSimilarButDifferentDay_ReturnsFalse()
+    public async Task FindMatch_SimilarTitleButDifferentDay_ReturnsNull()
     {
         var start = new DateTimeOffset(2026, 9, 14, 18, 0, 0, TimeSpan.FromHours(2));
         var differentDay = start.AddDays(5);
@@ -93,8 +93,8 @@ public class DuplicateDetectionServiceTests
                  .ReturnsAsync([existing]);
 
         var candidate = MakeEvent("Träning", "Tage", start);
-        var result = await CreateSut().IsDuplicateAsync(candidate);
+        var result = await CreateSut().FindMatchAsync(candidate);
 
-        Assert.False(result);
+        Assert.Null(result);
     }
 }

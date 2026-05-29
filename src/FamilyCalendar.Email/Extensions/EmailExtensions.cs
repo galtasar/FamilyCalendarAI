@@ -12,7 +12,8 @@ public static class EmailExtensions
         services.AddSingleton<GmailClientService>();
         services.AddSingleton<EmailParser>();
         services.AddScoped<IReviewNotificationService, ReviewNotificationService>();
-        services.AddHostedService<GmailPollingService>();
+        services.AddSingleton<GmailPollingService>();
+        services.AddHostedService(sp => sp.GetRequiredService<GmailPollingService>());
         services.AddHostedService<WeeklySummaryService>();
         return services;
     }

@@ -58,7 +58,12 @@ public class WeeklySummaryService(
             using var scope = scopeFactory.CreateScope();
             var eventRepo = scope.ServiceProvider.GetRequiredService<IEventRepository>();
 
-            var monday = DateTimeOffset.Now.Date.AddDays(1);
+            var tz2 = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm");
+            var today = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz2).Date;
+            // Next Monday from today (always covers the week after the summary is sent)
+            var daysToNextMonday = ((int)DayOfWeek.Monday - (int)today.DayOfWeek + 7) % 7;
+            if (daysToNextMonday == 0) daysToNextMonday = 7; // already Monday → next Monday
+            var monday = today.AddDays(daysToNextMonday);
             var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59);
 
             var events = await eventRepo.GetByDateRangeAsync(monday, sunday, null, ct);

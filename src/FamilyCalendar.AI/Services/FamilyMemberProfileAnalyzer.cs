@@ -12,6 +12,7 @@ namespace FamilyCalendar.AI.Services;
 public class FamilyMemberProfileAnalyzer(IOptions<OpenAiOptions> options, ILogger<FamilyMemberProfileAnalyzer> logger)
 {
     public async Task<FamilyMemberProfileAnalysisResult?> AnalyzeAsync(
+        string emailSender,
         string emailSubject,
         string emailBody,
         IReadOnlyList<FamilyMember> familyMembers,
@@ -26,7 +27,23 @@ public class FamilyMemberProfileAnalyzer(IOptions<OpenAiOptions> options, ILogge
             {{BuildFamilyMembersWithProfiles(familyMembers)}}
 
             Dina uppgifter:
-            1. PROFIL-UPPDATERINGAR: Identifiera ny information om familjemedlemmarnas aktiviteter, föreningar, årsgrupper etc. som inte redan finns i deras profil. Returnera bara genuint ny information.
+            1. PROFIL-UPPDATERINGAR: Identifiera STABIL, LÅNGSIKTIG information om familjemedlemmarna
+               som inte redan finns i deras profil. Returnera bara genuint ny information.
+
+               Bra exempel på vad som ska sparas:
+               - Tillhörighet (skola, klass, förskola, avdelning, jobb)
+               - Föreningar och lag (klubbnamn, lagnamn, träningstider)
+               - Återkommande aktiviteter (klättring, ridning, simskola)
+               - Kontaktpersoner — klassföreståndare, tränare, läkare, terapeut.
+                 Inkludera namn OCH e-postadress om båda är kända. Detta är särskilt
+                 värdefullt eftersom avsändaren av framtida mail kan identifieras därigenom.
+                 Exempel: "Klassföreståndare: Sabina Danielsson (sabina@vattholmaskolan.se)".
+
+               SPARA ALDRIG engångshändelser (specifika datum, möten, utflykter, läkartider) —
+               de hör hemma i kalendern, inte i profilen. Skriv t.ex. INTE "Deltar i
+               friidrottsdagen 26/5" eller "Har läkartid 14 mars". Skriv ENBART det som
+               förblir sant om månader och år.
+
             2. FRÅGOR: Om mailet innehåller information som tyder på en aktivitet men det är oklart vem det gäller, generera en tydlig fråga till användaren.
 
             Returnera ENDAST JSON:
@@ -43,6 +60,7 @@ public class FamilyMemberProfileAnalyzer(IOptions<OpenAiOptions> options, ILogge
             """;
 
         var userMessage = $"""
+            Avsändare: {emailSender}
             Ämne: {emailSubject}
 
             E-post:

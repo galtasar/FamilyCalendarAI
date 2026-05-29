@@ -20,9 +20,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Serilog;
 
-// Allow Npgsql to accept DateTimeOffset with any UTC offset (converts to UTC automatically)
-AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
-
 var builder = WebApplication.CreateBuilder(args);
 
 // Serialize enums as strings in all JSON responses
@@ -89,6 +86,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddCalendarServices();
 
 // Domain services
+builder.Services.Configure<EventDecisionOptions>(builder.Configuration.GetSection(EventDecisionOptions.Section));
 builder.Services.AddScoped<IDuplicateDetectionService, DuplicateDetectionService>();
 builder.Services.AddScoped<EventDecisionService>();
 
@@ -292,6 +290,27 @@ app.MapPost("/api/process-email", async (
 
     return Results.Accepted($"/api/emails/{email.Id}", new { email.Id, status = "queued" });
 }).WithName("ProcessEmail");
+
+// ── Email sync ────────────────────────────────────────────────────────────────
+app.MapPost("/api/sync-emails", async (
+    GmailPollingService poller,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    try
+    {
+        await poller.PollAsync(ct);
+        return Results.Ok();
+    }
+    catch (Google.Apis.Auth.OAuth2.Responses.TokenResponseException ex)
+    {
+        logger.LogError(ex, "Gmail OAuth token rejected during manual sync");
+        return Results.Problem(
+            title: "Gmail authentication failed",
+            detail: $"Refresh token rejected by Google: {ex.Error.Error}. Regenerate it with tools/GetRefreshToken and update .env.",
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
+}).WithName("SyncEmails");
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 // Removes the FamilyCalendarProcessed label from all Gmail messages so they can be re-imported.
