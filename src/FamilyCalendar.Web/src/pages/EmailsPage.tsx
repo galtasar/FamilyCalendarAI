@@ -1,4 +1,4 @@
-import { Typography, Table, TableBody, TableCell, TableHead, TableRow, Chip, Paper, CircularProgress, Alert, Card, CardContent, Stack, Box, useMediaQuery, useTheme } from '@mui/material'
+import { Typography, Table, TableBody, TableCell, TableHead, TableRow, Chip, Paper, CircularProgress, Alert, Card, CardContent, Stack, useMediaQuery, useTheme } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
 import { getEmails } from '../api'
 
