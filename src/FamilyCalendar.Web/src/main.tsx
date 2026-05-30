@@ -6,7 +6,16 @@ import { ThemeProvider, createTheme, CssBaseline } from '@mui/material'
 import App from './App'
 
 const queryClient = new QueryClient()
-const theme = createTheme({ palette: { mode: 'light' } })
+const theme = createTheme({
+  palette: { mode: 'light' },
+  components: {
+    MuiCssBaseline: {
+      styleOverrides: {
+        body: { overflowX: 'hidden' }
+      }
+    }
+  }
+})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
