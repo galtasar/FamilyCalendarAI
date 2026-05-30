@@ -1,10 +1,8 @@
-import { useState } from 'react'
 import { Routes, Route, Link, useLocation } from 'react-router-dom'
 import {
   AppBar, Toolbar, Typography, Container, BottomNavigation, BottomNavigationAction,
-  Box, IconButton, Drawer, List, ListItemButton, ListItemText, useMediaQuery, useTheme
+  Box, useMediaQuery, useTheme
 } from '@mui/material'
-import MenuIcon from '@mui/icons-material/Menu'
 import DashboardPage from './pages/DashboardPage'
 import EmailsPage from './pages/EmailsPage'
 import ReviewPage from './pages/ReviewPage'
@@ -25,7 +23,6 @@ export default function App() {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
   const location = useLocation()
-  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const currentIndex = navItems.findIndex(n =>
     n.path === '/' ? location.pathname === '/' : location.pathname.startsWith(n.path)
@@ -36,32 +33,12 @@ export default function App() {
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>📅 Familjekalender AI</Typography>
-          {isMobile ? (
-            <>
-              <IconButton color="inherit" onClick={() => setDrawerOpen(true)}>
-                <MenuIcon />
-              </IconButton>
-              <Drawer anchor="right" open={drawerOpen} onClose={() => setDrawerOpen(false)}>
-                <Box sx={{ width: 220 }} onClick={() => setDrawerOpen(false)}>
-                  <List>
-                    {navItems.map(item => (
-                      <ListItemButton key={item.path} component={Link} to={item.path}
-                        selected={item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path)}>
-                        <ListItemText primary={`${item.icon} ${item.label}`} />
-                      </ListItemButton>
-                    ))}
-                  </List>
-                </Box>
-              </Drawer>
-            </>
-          ) : (
-            navItems.map(item => (
-              <Box key={item.path} component={Link} to={item.path}
-                sx={{ color: 'inherit', textDecoration: 'none', mx: 1, opacity: currentIndex === navItems.indexOf(item) ? 1 : 0.75, '&:hover': { opacity: 1 } }}>
-                <Typography variant="button">{item.label}</Typography>
-              </Box>
-            ))
-          )}
+          {!isMobile && navItems.map(item => (
+            <Box key={item.path} component={Link} to={item.path}
+              sx={{ color: 'inherit', textDecoration: 'none', mx: 1, opacity: currentIndex === navItems.indexOf(item) ? 1 : 0.75, '&:hover': { opacity: 1 } }}>
+              <Typography variant="button">{item.label}</Typography>
+            </Box>
+          ))}
         </Toolbar>
       </AppBar>
 
