@@ -123,7 +123,7 @@ public class EmailParser
             var sb = new StringBuilder();
             foreach (var evt in calendar.Events.OfType<Ical.Net.CalendarComponents.CalendarEvent>())
             {
-                sb.AppendLine($"Händelse: {evt.Summary}");
+                sb.AppendLine($"Händelse: {evt.Summary ?? string.Empty}");
                 if (evt.DtStart != null) sb.AppendLine($"Start: {evt.DtStart.Value}");
                 if (evt.DtEnd != null) sb.AppendLine($"Slut: {evt.DtEnd.Value}");
                 if (!string.IsNullOrWhiteSpace(evt.Location)) sb.AppendLine($"Plats: {evt.Location}");
