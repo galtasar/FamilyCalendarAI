@@ -26,3 +26,7 @@ appsettings.*.json
 # Logs
 *.log
 logs/
+
+# SSH keys — never commit
+*.key
+*.pem
