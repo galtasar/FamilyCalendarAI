@@ -11,7 +11,7 @@ const statusLabel = (s: string) =>
 export default function EventsPage() {
   const { data, isLoading, isError } = useQuery({ queryKey: ['events'], queryFn: () => getEvents() })
   const theme = useTheme()
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'))
 
   if (isLoading) return <CircularProgress />
   if (isError) return <Alert severity="error">Kunde inte hämta händelselistan. Försök igen senare.</Alert>

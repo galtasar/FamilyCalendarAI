@@ -11,7 +11,7 @@ const classLabel = (c: string) =>
 export default function EmailsPage() {
   const { data, isLoading, isError } = useQuery({ queryKey: ['emails'], queryFn: getEmails })
   const theme = useTheme()
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'))
 
   if (isLoading) return <CircularProgress />
   if (isError) return <Alert severity="error">Kunde inte hämta e-postlistan. Försök igen senare.</Alert>
