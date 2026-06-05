@@ -1,3 +1,6 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using FamilyCalendar.AI.Extensions;
 using FamilyCalendar.AI.Services;
 using FamilyCalendar.Api.Validators;
@@ -16,8 +19,10 @@ using FamilyCalendar.Infrastructure.Extensions;
 using FamilyCalendar.Infrastructure.HostedServices;
 using FamilyCalendar.Infrastructure.Services;
 using FluentValidation;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -54,6 +59,25 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.SetIsOriginAllowed(origin => new Uri(origin).Host == "localhost")
      .AllowAnyHeader()
      .AllowAnyMethod()));
+
+// JWT Authentication
+var jwtSecret = builder.Configuration["JWT_SECRET"]
+    ?? throw new InvalidOperationException("JWT_SECRET is required");
+var jwtKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = jwtKey,
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+builder.Services.AddAuthorization();
 
 // JSON: handle circular references from navigation properties
 builder.Services.ConfigureHttpJsonOptions(opts =>
@@ -108,6 +132,8 @@ builder.Services.AddOpenApi();
 var app = builder.Build();
 
 app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseSerilogRequestLogging();
 
 if (app.Environment.IsDevelopment())
@@ -127,6 +153,21 @@ using (var scope = app.Services.CreateScope())
 
 app.MapDefaultEndpoints();
 
+// ── Auth (public) ──────────────────────────────────────────────────────────────
+app.MapPost("/api/auth/login", (LoginRequest req, IConfiguration config) =>
+{
+    var appPassword = config["APP_PASSWORD"];
+    if (string.IsNullOrEmpty(appPassword) || req.Password != appPassword)
+        return Results.Unauthorized();
+
+    var token = new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(
+        claims: [new Claim(ClaimTypes.Name, "family")],
+        expires: DateTime.UtcNow.AddDays(90),
+        signingCredentials: new SigningCredentials(jwtKey, SecurityAlgorithms.HmacSha256)
+    ));
+    return Results.Ok(new { token });
+}).AllowAnonymous().WithName("Login");
+
 // ── Emails ────────────────────────────────────────────────────────────────────
 app.MapGet("/api/emails", async (IEmailRepository repo) =>
 {
@@ -137,20 +178,20 @@ app.MapGet("/api/emails", async (IEmailRepository repo) =>
         Classification = e.Classification.ToString(),
         e.Confidence
     }));
-}).WithName("GetEmails");
+}).WithName("GetEmails").RequireAuthorization();
 
 app.MapGet("/api/emails/{id:guid}", async (Guid id, IEmailRepository repo) =>
 {
     var email = await repo.GetByIdAsync(id);
     return email is null ? Results.NotFound() : Results.Ok(email);
-}).WithName("GetEmailById");
+}).WithName("GetEmailById").RequireAuthorization();
 
 // ── FamilyMembers ─────────────────────────────────────────────────────────────
 app.MapGet("/api/familymembers", async (IFamilyMemberRepository repo) =>
 {
     var familyMembers = await repo.GetAllAsync();
     return Results.Ok(familyMembers);
-}).WithName("GetFamilyMembers");
+}).WithName("GetFamilyMembers").RequireAuthorization();
 
 app.MapPatch("/api/familymembers/{id:guid}", async (Guid id, UpdateFamilyMemberRequest req, IFamilyMemberRepository repo) =>
 {
@@ -161,7 +202,7 @@ app.MapPatch("/api/familymembers/{id:guid}", async (Guid id, UpdateFamilyMemberR
 
     await repo.UpdateAsync(familyMember);
     return Results.Ok(familyMember);
-}).WithName("UpdateFamilyMember");
+}).WithName("UpdateFamilyMember").RequireAuthorization();
 
 // ── Events ────────────────────────────────────────────────────────────────────
 app.MapGet("/api/events", async (
@@ -170,13 +211,13 @@ app.MapGet("/api/events", async (
 {
     var events = await repo.GetAllAsync(familyMemberName, from, to);
     return Results.Ok(events);
-}).WithName("GetEvents");
+}).WithName("GetEvents").RequireAuthorization();
 
 app.MapGet("/api/events/pending-review", async (IEventRepository repo) =>
 {
     var events = await repo.GetPendingReviewAsync();
     return Results.Ok(events);
-}).WithName("GetPendingReview");
+}).WithName("GetPendingReview").RequireAuthorization();
 
 app.MapPost("/api/events/{id:guid}/approve", async (
     Guid id,
@@ -194,7 +235,7 @@ app.MapPost("/api/events/{id:guid}/approve", async (
     await repo.UpdateAsync(evt);
 
     return Results.Ok(new { evt.Id, evt.Status, calendarEventId });
-}).WithName("ApproveEvent");
+}).WithName("ApproveEvent").RequireAuthorization();
 
 app.MapPost("/api/events/{id:guid}/reject", async (Guid id, IEventRepository repo) =>
 {
@@ -206,7 +247,7 @@ app.MapPost("/api/events/{id:guid}/reject", async (Guid id, IEventRepository rep
     await repo.UpdateAsync(evt);
 
     return Results.Ok(new { evt.Id, evt.Status });
-}).WithName("RejectEvent");
+}).WithName("RejectEvent").RequireAuthorization();
 
 app.MapPatch("/api/events/{id:guid}", async (
     Guid id,
@@ -229,7 +270,7 @@ app.MapPatch("/api/events/{id:guid}", async (
 
     await repo.UpdateAsync(evt);
     return Results.Ok(evt);
-}).WithName("UpdateEvent");
+}).WithName("UpdateEvent").RequireAuthorization();
 
 app.MapGet("/api/events/{id:guid}/review-questions", async (Guid id, IEventRepository repo) =>
 {
@@ -239,7 +280,7 @@ app.MapGet("/api/events/{id:guid}/review-questions", async (Guid id, IEventRepos
 
     var questions = System.Text.Json.JsonSerializer.Deserialize<List<ReviewQuestion>>(evt.ReviewQuestionsJson) ?? [];
     return Results.Ok(questions);
-}).WithName("GetEventReviewQuestions");
+}).WithName("GetEventReviewQuestions").RequireAuthorization();
 
 app.MapPost("/api/events/{id:guid}/answer-question", async (
     Guid id,
@@ -259,7 +300,7 @@ app.MapPost("/api/events/{id:guid}/answer-question", async (
 
     await familyMemberRepo.UpdateAsync(familyMember);
     return Results.Ok(familyMember);
-}).WithName("AnswerReviewQuestion");
+}).WithName("AnswerReviewQuestion").RequireAuthorization();
 
 // ── Manual email submission (testing / future use) ────────────────────────────
 app.MapPost("/api/process-email", async (
@@ -289,7 +330,7 @@ app.MapPost("/api/process-email", async (
     await channel.WriteAsync(email);
 
     return Results.Accepted($"/api/emails/{email.Id}", new { email.Id, status = "queued" });
-}).WithName("ProcessEmail");
+}).WithName("ProcessEmail").RequireAuthorization();
 
 // ── Email sync ────────────────────────────────────────────────────────────────
 app.MapPost("/api/sync-emails", async (
@@ -310,7 +351,7 @@ app.MapPost("/api/sync-emails", async (
             detail: $"Refresh token rejected by Google: {ex.Error.Error}. Regenerate it with tools/GetRefreshToken and update .env.",
             statusCode: StatusCodes.Status401Unauthorized);
     }
-}).WithName("SyncEmails");
+}).WithName("SyncEmails").RequireAuthorization();
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 // Removes the FamilyCalendarProcessed label from all Gmail messages so they can be re-imported.
@@ -369,6 +410,7 @@ app.MapPost("/api/admin/sync-approved-events", async (
 
 app.Run();
 
+public record LoginRequest(string Password);
 public record UpdateEventRequest(string? Title, string? Description, DateTimeOffset? StartTime, DateTimeOffset? EndTime, string? Location, string? FamilyMemberName);
 public record UpdateFamilyMemberRequest(string? Description);
 public record AnswerQuestionRequest(string FamilyMemberName, string NewInfo);

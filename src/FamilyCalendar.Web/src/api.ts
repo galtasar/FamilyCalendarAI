@@ -2,6 +2,28 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '' })
 
+// Attach JWT to every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('auth_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// On 401, clear token and reload to trigger login screen
+api.interceptors.response.use(
+  r => r,
+  err => {
+    if (err.response?.status === 401 && !err.config.url?.includes('/api/auth/login')) {
+      localStorage.removeItem('auth_token')
+      window.location.reload()
+    }
+    return Promise.reject(err)
+  }
+)
+
+export const login = (password: string) =>
+  axios.post<{ token: string }>('/api/auth/login', { password }).then(r => r.data)
+
 export interface EmailSummary {
   id: string
   sender: string

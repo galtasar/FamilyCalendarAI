@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Routes, Route, Link, useLocation } from 'react-router-dom'
 import {
   AppBar, Toolbar, Typography, Container, BottomNavigation, BottomNavigationAction,
@@ -10,6 +11,7 @@ import ReviewDetailPage from './pages/ReviewDetailPage'
 import EventsPage from './pages/EventsPage'
 import ReviewActionPage from './pages/ReviewActionPage'
 import FamilyMembersPage from './pages/FamilyMembersPage'
+import LoginPage from './pages/LoginPage'
 
 const navItems = [
   { label: 'Översikt', path: '/', icon: '🏠' },
@@ -23,6 +25,11 @@ export default function App() {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
   const location = useLocation()
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'))
+
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={() => setIsAuthenticated(true)} />
+  }
 
   const currentIndex = navItems.findIndex(n =>
     n.path === '/' ? location.pathname === '/' : location.pathname.startsWith(n.path)
