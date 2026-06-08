@@ -35,6 +35,8 @@ services:
       - ReviewNotification__RecipientEmail=${APP_EMAIL}
       - WeeklySummary__RecipientEmail=${APP_EMAIL}
       - AdminKey=${ADMIN_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - APP_PASSWORD=${APP_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
