@@ -33,7 +33,7 @@ public class EventRepository(AppDbContext db) : IEventRepository
     public async Task<IReadOnlyList<CalendarEvent>> GetByDateRangeAsync(DateTimeOffset from, DateTimeOffset to, string? familyMemberName = null, CancellationToken ct = default)
     {
         var q = db.CalendarEvents.Where(e => e.StartTime >= from && e.StartTime <= to);
-        if (familyMemberName != null) q = q.Where(e => e.FamilyMemberName == familyMemberName);
+        if (familyMemberName != null) q = ApplyFamilyMemberFilter(q, familyMemberName);
         return await q.OrderBy(e => e.StartTime).ToListAsync(ct);
     }
 
@@ -45,9 +45,18 @@ public class EventRepository(AppDbContext db) : IEventRepository
     public async Task<IReadOnlyList<CalendarEvent>> GetAllAsync(string? familyMemberName = null, DateTimeOffset? from = null, DateTimeOffset? to = null, CancellationToken ct = default)
     {
         var q = db.CalendarEvents.AsQueryable();
-        if (familyMemberName != null) q = q.Where(e => e.FamilyMemberName == familyMemberName);
+        if (familyMemberName != null) q = ApplyFamilyMemberFilter(q, familyMemberName);
         if (from != null) q = q.Where(e => e.StartTime >= from);
         if (to != null) q = q.Where(e => e.StartTime <= to);
         return await q.OrderBy(e => e.StartTime).ToListAsync(ct);
     }
+
+    // Matches a single member name within a comma-separated FamilyMemberName column.
+    // Works across EF Core providers (InMemory, SQLite, PostgreSQL).
+    private static IQueryable<CalendarEvent> ApplyFamilyMemberFilter(IQueryable<CalendarEvent> q, string name) =>
+        q.Where(e =>
+            e.FamilyMemberName == name ||
+            e.FamilyMemberName.StartsWith(name + ",") ||
+            e.FamilyMemberName.EndsWith(", " + name) ||
+            e.FamilyMemberName.Contains(", " + name + ","));
 }

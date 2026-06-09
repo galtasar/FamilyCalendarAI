@@ -13,9 +13,10 @@ public class EventDecisionServiceTests
 {
     private readonly Mock<IEventRepository> _eventRepoMock = new();
     private readonly Mock<IDuplicateDetectionService> _dupMock = new();
+    private readonly Mock<IDescriptionEvaluationService> _descEvalMock = new();
 
     private EventDecisionService CreateSut() =>
-        new(_eventRepoMock.Object, _dupMock.Object,
+        new(_eventRepoMock.Object, _dupMock.Object, _descEvalMock.Object,
             Options.Create(new EventDecisionOptions()),
             NullLogger<EventDecisionService>.Instance);
 
@@ -33,7 +34,8 @@ public class EventDecisionServiceTests
         new() { Relevant = relevant, Confidence = confidence, Events = [.. events] };
 
     private static CalendarEvent MakeExistingEvent(string title, string familyMember, DateTimeOffset start,
-        string? calendarEventId = null, string? description = null, string? location = null) => new()
+        string? calendarEventId = null, string? description = null, string? location = null,
+        bool hasTime = true) => new()
     {
         Id = Guid.NewGuid(),
         EmailId = Guid.NewGuid(),
@@ -43,6 +45,7 @@ public class EventDecisionServiceTests
         Description = description,
         Location = location,
         CalendarEventId = calendarEventId,
+        HasTime = hasTime,
         Status = calendarEventId != null ? EventStatus.Created : EventStatus.Pending,
         CreatedAt = DateTimeOffset.UtcNow
     };
@@ -183,6 +186,9 @@ public class EventDecisionServiceTests
 
         _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(existing);
+        // AI confirms: no new information
+        _descEvalMock.Setup(d => d.MergeAsync(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((string?)null);
 
         var result = MakeResult(relevant: true, confidence: 0.90, new AiEventDraft
         {
@@ -206,6 +212,9 @@ public class EventDecisionServiceTests
 
         _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(existing);
+        // AI confirms: new info present, returns merged description
+        _descEvalMock.Setup(d => d.MergeAsync(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync("Grundinfo\n\nTa med gympaskor");
         _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .Returns(Task.CompletedTask);
 
@@ -232,6 +241,8 @@ public class EventDecisionServiceTests
 
         _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(existing);
+        _descEvalMock.Setup(d => d.MergeAsync(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync("Grundinfo\n\nTa med gympaskor");
         _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .Returns(Task.CompletedTask);
 
@@ -258,6 +269,8 @@ public class EventDecisionServiceTests
 
         _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(existing);
+        _descEvalMock.Setup(d => d.MergeAsync(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((string?)null);
         _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
                       .Returns(Task.CompletedTask);
 
@@ -377,5 +390,62 @@ public class EventDecisionServiceTests
         Assert.Single(events);
         Assert.Equal(EventStatus.Rejected, events[0].Status);
         Assert.Equal("gcal-789", events[0].CalendarEventId);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_CrossMemberMerge_FlagsNeedsReview()
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(5);
+        // Existing event only has Vera
+        var existing = MakeExistingEvent("Skolavslutning", "Vera", start, calendarEventId: "gcal-sko");
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing); // cross-member match returned
+        _descEvalMock.Setup(d => d.MergeAsync(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((string?)null);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        // New email adds Tage to the same event
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
+        {
+            FamilyMembers = ["Tage"], Title = "Skolavslutning",
+            Start = start, HasTime = true
+        });
+
+        var events = await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        Assert.Single(events);
+        Assert.True(events[0].NeedsReview);
+        Assert.Contains("Tage", events[0].FamilyMemberName);
+        Assert.Contains("Vera", events[0].FamilyMemberName);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MorePreciseTime_UpdatesStartTimeOnExistingEvent()
+    {
+        var dateOnly = new DateTimeOffset(2026, 6, 13, 0, 0, 0, TimeSpan.Zero);
+        var existing = MakeExistingEvent("Utflykt", "Vera", dateOnly, calendarEventId: "gcal-trip", hasTime: false);
+
+        _dupMock.Setup(d => d.FindMatchAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(existing);
+        _descEvalMock.Setup(d => d.MergeAsync(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((string?)null);
+        _eventRepoMock.Setup(r => r.UpdateAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+                      .Returns(Task.CompletedTask);
+
+        var preciseStart = new DateTimeOffset(2026, 6, 13, 9, 0, 0, TimeSpan.Zero);
+        var preciseEnd = new DateTimeOffset(2026, 6, 13, 15, 0, 0, TimeSpan.Zero);
+        var result = MakeResult(relevant: true, confidence: 0.95, new AiEventDraft
+        {
+            FamilyMembers = ["Vera"], Title = "Utflykt",
+            Start = preciseStart, End = preciseEnd, HasTime = true
+        });
+
+        await CreateSut().ProcessAsync(MakeEmail(), result);
+
+        Assert.True(existing.HasTime);
+        Assert.Equal(preciseStart.ToUniversalTime(), existing.StartTime);
+        Assert.Equal(preciseEnd.ToUniversalTime(), existing.EndTime);
     }
 }

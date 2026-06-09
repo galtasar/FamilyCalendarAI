@@ -97,6 +97,8 @@ builder.Services.AddSingleton<IEmailProcessingChannel, EmailProcessingChannel>()
 builder.Services.Configure<OpenAiOptions>(builder.Configuration.GetSection(OpenAiOptions.Section));
 if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddAiServices();
+else
+    builder.Services.AddScoped<IDescriptionEvaluationService, NoOpDescriptionEvaluationService>();
 
 // Email
 builder.Services.Configure<GmailOptions>(builder.Configuration.GetSection(GmailOptions.Section));
@@ -415,6 +417,13 @@ public record UpdateEventRequest(string? Title, string? Description, DateTimeOff
 public record UpdateFamilyMemberRequest(string? Description);
 public record AnswerQuestionRequest(string FamilyMemberName, string NewInfo);
 public record ProcessEmailRequest(string MessageId, string Sender, string Subject, string Body, DateTimeOffset ReceivedAt);
+
+// Used in the Testing environment in place of the real AI-backed service.
+public class NoOpDescriptionEvaluationService : IDescriptionEvaluationService
+{
+    public Task<string?> MergeAsync(string? existingDescription, string newSummary, CancellationToken ct = default)
+        => Task.FromResult<string?>(null);
+}
 
 // Required for WebApplicationFactory in integration tests
 public partial class Program { }

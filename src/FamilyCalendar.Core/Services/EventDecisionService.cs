@@ -12,7 +12,12 @@ public class EventDecisionOptions
     public double AutoApproveThreshold { get; set; } = 0.80;
 }
 
-public class EventDecisionService(IEventRepository eventRepo, IDuplicateDetectionService duplicateDetection, IOptions<EventDecisionOptions> options, ILogger<EventDecisionService> logger)
+public class EventDecisionService(
+    IEventRepository eventRepo,
+    IDuplicateDetectionService duplicateDetection,
+    IDescriptionEvaluationService descriptionEvaluator,
+    IOptions<EventDecisionOptions> options,
+    ILogger<EventDecisionService> logger)
 {
     private const double AutoCreateThreshold = 0.80; // fallback; overridden by options
 
@@ -68,14 +73,24 @@ public class EventDecisionService(IEventRepository eventRepo, IDuplicateDetectio
         var existing = await duplicateDetection.FindMatchAsync(candidate, ct);
         if (existing != null)
         {
-            if (!HasNewInformation(candidate, existing, draft.Summary))
+            bool hasStructuralNewInfo = HasNewInformation(candidate, existing);
+
+            // Use AI to evaluate if the new summary adds information not yet in the description.
+            string? mergedDescription = null;
+            if (!string.IsNullOrWhiteSpace(draft.Summary))
+                mergedDescription = await descriptionEvaluator.MergeAsync(existing.Description, draft.Summary, ct);
+
+            if (!hasStructuralNewInfo && mergedDescription == null)
             {
                 logger.LogInformation("Pure duplicate detected for {FamilyMembers}, skipping '{Title}'",
                     familyMemberName, candidate.Title);
                 return null;
             }
 
-            MergeInto(existing, candidate, draft.Summary);
+            bool crossMemberMerge = MergeInto(existing, candidate, mergedDescription, sourceNote);
+            if (crossMemberMerge)
+                existing.NeedsReview = true;
+
             await eventRepo.UpdateAsync(existing, ct);
             logger.LogInformation("Updated existing event '{Title}' for {FamilyMembers} with new information",
                 existing.Title, existing.FamilyMemberName);
@@ -122,7 +137,7 @@ public class EventDecisionService(IEventRepository eventRepo, IDuplicateDetectio
         draft.Start == null ||
         !draft.HasTime;
 
-    private static bool HasNewInformation(CalendarEvent candidate, CalendarEvent existing, string? aiSummary = null)
+    private static bool HasNewInformation(CalendarEvent candidate, CalendarEvent existing)
     {
         // New family members not yet on the existing event
         var existingMembers = SplitMembers(existing.FamilyMemberName);
@@ -138,27 +153,24 @@ public class EventDecisionService(IEventRepository eventRepo, IDuplicateDetectio
         if (candidate.EndTime.HasValue && !existing.EndTime.HasValue)
             return true;
 
-        // Compare only the AI-extracted summary (not the appended source note) against
-        // existing description to avoid treating every repeat email as "new information".
-        var compareDesc = aiSummary;
-        if (!string.IsNullOrWhiteSpace(compareDesc))
-        {
-            if (string.IsNullOrWhiteSpace(existing.Description))
-                return true;
-            if (!existing.Description.Contains(compareDesc, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
+        // Time precision upgraded: follow-up email provides a specific time where none existed
+        if (candidate.HasTime && !existing.HasTime)
+            return true;
 
         return false;
     }
 
-    private static void MergeInto(CalendarEvent existing, CalendarEvent candidate, string? aiSummary)
+    // Returns true if new family members were added (indicating a cross-member merge).
+    private static bool MergeInto(CalendarEvent existing, CalendarEvent candidate, string? mergedDescription, string? sourceNote)
     {
         // Union of family members, preserving original order
         var existingMembers = SplitMembers(existing.FamilyMemberName);
         var newMembers = SplitMembers(candidate.FamilyMemberName)
-            .Where(m => !existingMembers.Contains(m, StringComparer.OrdinalIgnoreCase));
-        existing.FamilyMemberName = string.Join(", ", existingMembers.Concat(newMembers));
+            .Where(m => !existingMembers.Contains(m, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        bool newMembersAdded = newMembers.Count > 0;
+        if (newMembersAdded)
+            existing.FamilyMemberName = string.Join(", ", existingMembers.Concat(newMembers));
 
         if (string.IsNullOrWhiteSpace(existing.Location) && !string.IsNullOrWhiteSpace(candidate.Location))
             existing.Location = candidate.Location;
@@ -166,14 +178,25 @@ public class EventDecisionService(IEventRepository eventRepo, IDuplicateDetectio
         if (!existing.EndTime.HasValue && candidate.EndTime.HasValue)
             existing.EndTime = candidate.EndTime;
 
-        // Append only the new AI-extracted summary (not the source note) to keep descriptions readable.
-        if (!string.IsNullOrWhiteSpace(aiSummary))
+        // Upgrade time precision when the new email provides a specific time where none existed.
+        if (candidate.HasTime && !existing.HasTime)
         {
-            if (string.IsNullOrWhiteSpace(existing.Description))
-                existing.Description = aiSummary;
-            else if (!existing.Description.Contains(aiSummary, StringComparison.OrdinalIgnoreCase))
-                existing.Description = $"{existing.Description}\n\n{aiSummary}";
+            existing.StartTime = candidate.StartTime;
+            existing.HasTime = true;
+            if (candidate.EndTime.HasValue)
+                existing.EndTime = candidate.EndTime;
         }
+
+        // Apply AI-merged description and append the new source note for traceability.
+        if (mergedDescription != null)
+        {
+            var description = mergedDescription;
+            if (!string.IsNullOrWhiteSpace(sourceNote) && !description.Contains(sourceNote))
+                description = $"{description}\n\n{sourceNote}";
+            existing.Description = description;
+        }
+
+        return newMembersAdded;
     }
 
     private static string[] SplitMembers(string memberNames) =>
