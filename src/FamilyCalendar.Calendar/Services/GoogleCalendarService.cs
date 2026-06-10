@@ -122,6 +122,9 @@ public class GoogleCalendarService(IOptions<GoogleCalendarOptions> options, ILog
         await client.Events.Delete(calendarId, calendarEvent.CalendarEventId).ExecuteAsync();
     }
 
+    private static readonly TimeZoneInfo StockholmTz =
+        TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm");
+
     private static Event MapToGoogleEvent(CalendarEvent evt)
     {
         var googleEvent = new Event
@@ -133,9 +136,13 @@ public class GoogleCalendarService(IOptions<GoogleCalendarOptions> options, ILog
 
         if (!evt.HasTime)
         {
-            // No specific time known — create as all-day event
-            googleEvent.Start = new EventDateTime { Date = evt.StartTime.ToString("yyyy-MM-dd") };
-            googleEvent.End = new EventDateTime { Date = evt.StartTime.AddDays(1).ToString("yyyy-MM-dd") };
+            // No specific time — create as all-day event.
+            // StartTime is stored as UTC, so convert to Stockholm local date first;
+            // otherwise a Stockholm midnight (00:00+02:00 = 22:00 UTC previous day)
+            // would produce the wrong date string.
+            var localDate = TimeZoneInfo.ConvertTime(evt.StartTime, StockholmTz);
+            googleEvent.Start = new EventDateTime { Date = localDate.ToString("yyyy-MM-dd") };
+            googleEvent.End = new EventDateTime { Date = localDate.AddDays(1).ToString("yyyy-MM-dd") };
         }
         else
         {
