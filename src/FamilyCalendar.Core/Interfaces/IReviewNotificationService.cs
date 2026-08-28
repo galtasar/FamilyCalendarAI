@@ -4,5 +4,5 @@ namespace FamilyCalendar.Core.Interfaces;
 
 public interface IReviewNotificationService
 {
-    Task SendReviewNotificationAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
+    Task SendReviewNotificationAsync(IReadOnlyList<CalendarEvent> calendarEvents, CancellationToken ct = default);
 }

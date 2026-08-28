@@ -94,6 +94,7 @@ public class EmailProcessingService(
         }
 
         var events = await decisionService.ProcessAsync(email, result, ct);
+        var eventsNeedingReview = events.Where(e => e.NeedsReview).ToList();
         var profileAnalysis = await familyMemberProfileAnalyzer.AnalyzeAsync(email.Sender, email.Subject, email.Body, familyMembers, ct);
 
         if (profileAnalysis != null)
@@ -103,7 +104,7 @@ public class EmailProcessingService(
             if (profileAnalysis.Questions.Count > 0)
             {
                 var questionsJson = JsonSerializer.Serialize(profileAnalysis.Questions);
-                foreach (var evt in events.Where(e => e.NeedsReview))
+                foreach (var evt in eventsNeedingReview)
                 {
                     evt.ReviewQuestionsJson = questionsJson;
                     await eventRepo.UpdateAsync(evt, ct);
@@ -111,9 +112,10 @@ public class EmailProcessingService(
             }
         }
 
-        foreach (var evt in events.Where(e => e.NeedsReview))
+        // One email per processed email, listing every event that needs review
+        if (eventsNeedingReview.Count > 0)
         {
-            await notificationService.SendReviewNotificationAsync(evt, ct);
+            await notificationService.SendReviewNotificationAsync(eventsNeedingReview, ct);
         }
 
         foreach (var evt in events)
