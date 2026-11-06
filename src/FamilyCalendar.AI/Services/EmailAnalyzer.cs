@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenAI;
 using OpenAI.Chat;
+using System.Globalization;
 using System.Text.Json;
 
 namespace FamilyCalendar.AI.Services;
@@ -131,7 +132,19 @@ public class EmailAnalyzer(IOptions<OpenAiOptions> options, ILogger<EmailAnalyze
         4. Om varken datum eller tid är känt (t.ex. "snart", "kommande veckor"):
            - Sätt has_time = false, start = null, end = null, requires_manual_review = true.
 
-        5. Tidszon:
+        5. Veckodagar och datum:
+           - Räkna ALDRIG ut veckodagar själv. Använd kalendertabellen i användarmeddelandet
+             för att slå upp vilket datum en veckodag motsvarar.
+           - Om mailet nämner en veckodag för händelsen ("på torsdag", "fredagen den 13:e",
+             "onsdagens utflykt"), MÅSTE "start" falla på just den veckodagen. Veckodagen i
+             texten väger tyngre än din egen datumberäkning.
+           - Om mailet anger både veckodag och datum som inte stämmer överens enligt tabellen,
+             välj veckodagen och sätt requires_manual_review = true.
+           - Ange veckodagen som texten nämner i "weekday" (t.ex. "torsdag"), annars null.
+           - Tänk på att veckobrev ofta beskriver NÄSTA vecka (t.ex. "Vecka 45" kan handla om
+             aktiviteter vecka 46). Använd veckonumren i tabellen.
+
+        6. Tidszon:
            - Alla tider i mailet avser Europe/Stockholm. Använd ALLTID den UTC-offset som
              användarmeddelandet anger ovan (t.ex. "+02:00" sommartid, "+01:00" vintertid).
            - Använd ALDRIG "+00:00" eller "Z" om inte mailet uttryckligen säger UTC.
@@ -150,6 +163,7 @@ public class EmailAnalyzer(IOptions<OpenAiOptions> options, ILogger<EmailAnalyze
               "start": ISO8601 string med tid (null endast om has_time = false),
               "end": ISO8601 string med tid (null endast om has_time = false; använd uppskattning enligt händelsetyp om sluttid ej anges),
               "has_time": boolean,
+              "weekday": string | null (veckodagen som mailet nämner för händelsen, t.ex. "torsdag"),
               "location": string | null,
               "requires_manual_review": boolean,
               "is_recurring": boolean,
@@ -172,14 +186,18 @@ public class EmailAnalyzer(IOptions<OpenAiOptions> options, ILogger<EmailAnalyze
         var offsetStr = utcOffset >= TimeSpan.Zero
             ? $"+{utcOffset:hh\\:mm}"
             : $"-{utcOffset:hh\\:mm}";
+        var receivedLocal = TimeZoneInfo.ConvertTime(email.ReceivedAt, stockholmTz);
 
         var userMessage = $"""
             Avsändare: {email.Sender}
             Ämne: {email.Subject}
-            Mottaget: {email.ReceivedAt:yyyy-MM-dd HH:mm}
+            Mottaget: {FormatDate(receivedLocal.Date)} {receivedLocal:HH:mm}
             Tidszon för tider i mailet: Europe/Stockholm (UTC{offsetStr})
 
             VIKTIGT: Inkludera alltid tidzon i ISO8601-strängar, t.ex. "2026-05-31T14:00:00{offsetStr}"
+
+            Kalendertabell (använd denna för att översätta veckodagar till datum):
+            {BuildCalendarTable(receivedLocal.Date)}
 
             Familjemedlemsprofiler:
             {BuildFamilyMembersContext(familyMembers)}
@@ -212,6 +230,21 @@ public class EmailAnalyzer(IOptions<OpenAiOptions> options, ILogger<EmailAnalyze
             logger.LogError(ex, "AI analysis failed for email {MessageId}", email.MessageId);
             return null;
         }
+    }
+
+    // Hardcoded so it doesn't depend on sv-SE culture data being available in the container.
+    private static readonly string[] SwedishWeekdays =
+        ["söndag", "måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag"];
+
+    private static string FormatDate(DateTime date) =>
+        $"{SwedishWeekdays[(int)date.DayOfWeek]} {date:yyyy-MM-dd} (vecka {ISOWeek.GetWeekOfYear(date)})";
+
+    // One line per day from the Monday of the week before the received date, ten weeks ahead.
+    private static string BuildCalendarTable(DateTime received)
+    {
+        var monday = received.AddDays(-(((int)received.DayOfWeek + 6) % 7)).AddDays(-7);
+        return string.Join(Environment.NewLine, Enumerable.Range(0, 7 * 10)
+            .Select(i => $"- {FormatDate(monday.AddDays(i))}"));
     }
 
     private static string BuildFamilyMembersContext(IReadOnlyList<FamilyMember> familyMembers)

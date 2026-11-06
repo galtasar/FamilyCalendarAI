@@ -19,6 +19,7 @@ public class AiEventDraft
     [JsonPropertyName("start")] public DateTimeOffset? Start { get; set; }
     [JsonPropertyName("end")] public DateTimeOffset? End { get; set; }
     [JsonPropertyName("has_time")] public bool HasTime { get; set; }
+    [JsonPropertyName("weekday")] public string? Weekday { get; set; }
     [JsonPropertyName("location")] public string? Location { get; set; }
     [JsonPropertyName("requires_manual_review")] public bool RequiresManualReview { get; set; }
     [JsonPropertyName("is_recurring")] public bool IsRecurring { get; set; }

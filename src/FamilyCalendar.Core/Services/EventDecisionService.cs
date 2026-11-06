@@ -49,6 +49,11 @@ public class EventDecisionService(
             return null;
         }
 
+        var aiStart = draft.Start;
+        if (WeekdayCorrector.Correct(draft))
+            logger.LogWarning("Email {EmailId}: event '{Title}' was dated {AiStart:yyyy-MM-dd} but the email says {Weekday} — moved to {Start:yyyy-MM-dd}",
+                email.Id, draft.Title, aiStart, draft.Weekday, draft.Start);
+
         var familyMemberName = string.Join(", ", draft.FamilyMembers);
 
         var sourceNote = $"Källa: {email.Subject} ({email.ReceivedAt:yyyy-MM-dd})";
